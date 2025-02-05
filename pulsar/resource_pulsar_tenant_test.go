@@ -44,7 +44,7 @@ func TestTenant(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: testPulsarTenant,
-				Check:  resource.ComposeTestCheckFunc(testPulsarTenantExists("pulsar_tenant.test")),
+				Check:  resource.ComposeTestCheckFunc(testPulsarTenantExists()),
 			},
 		},
 	})
@@ -57,6 +57,11 @@ func TestHandleExistingTenant(t *testing.T) {
 		PreCheck: func() {
 			testAccPreCheck(t)
 			createTenant(t, tName)
+			t.Cleanup(func() {
+				if err := getClientFromMeta(testAccProvider.Meta()).Tenants().Delete(tName); err != nil {
+					t.Fatalf("ERROR_DELETING_TEST_TENANT: %v", err)
+				}
+			})
 		},
 		ProviderFactories:         testAccProviderFactories,
 		PreventPostDestroyRefresh: false,
@@ -77,6 +82,11 @@ func TestImportExistingTenant(t *testing.T) {
 		PreCheck: func() {
 			testAccPreCheck(t)
 			createTenant(t, tName)
+			t.Cleanup(func() {
+				if err := getClientFromMeta(testAccProvider.Meta()).Tenants().Delete(tName); err != nil {
+					t.Fatalf("ERROR_DELETING_TEST_TENANT: %v", err)
+				}
+			})
 		},
 		CheckDestroy:      testPulsarTenantDestroy,
 		ProviderFactories: testAccProviderFactories,
@@ -121,8 +131,9 @@ func testTenantImported() resource.ImportStateCheckFunc {
 	}
 }
 
-func testPulsarTenantExists(tenant string) resource.TestCheckFunc {
+func testPulsarTenantExists() resource.TestCheckFunc {
 	return func(s *terraform.State) error {
+		tenant := "pulsar_tenant.test"
 		rs, ok := s.RootModule().Resources[tenant]
 		if !ok {
 			return fmt.Errorf("NOT_FOUND: %s", tenant)
@@ -209,7 +220,7 @@ func TestTenantWithAdminRoles(t *testing.T) {
 			{
 				Config: strings.Replace(testPulsarTenantWithAdminRoles, "thanos", tName, 1),
 				Check: resource.ComposeTestCheckFunc(
-					testPulsarTenantExists("pulsar_tenant.test"),
+					testPulsarTenantExists(),
 					resource.TestCheckResourceAttr("pulsar_tenant.test", "admin_roles.#", "2"),
 					resource.TestCheckTypeSetElemAttr("pulsar_tenant.test", "admin_roles.*", testPulsarTenantWithAdminRoles1),
 					resource.TestCheckTypeSetElemAttr("pulsar_tenant.test", "admin_roles.*", testPulsarTenantWithAdminRoles2),
@@ -230,13 +241,13 @@ func TestTenantUpdateAdminRoles(t *testing.T) {
 			{
 				Config: strings.Replace(testPulsarTenantWithAdminRoles, "thanos", tName, 1),
 				Check: resource.ComposeTestCheckFunc(
-					testPulsarTenantExists("pulsar_tenant.test"),
+					testPulsarTenantExists(),
 				),
 			},
 			{
 				Config: strings.Replace(testPulsarTenantWithAdminRolesUpdated, "thanos", tName, 1),
 				Check: resource.ComposeTestCheckFunc(
-					testPulsarTenantExists("pulsar_tenant.test"),
+					testPulsarTenantExists(),
 					resource.TestCheckResourceAttr("pulsar_tenant.test", "admin_roles.#", "2"),
 					resource.TestCheckTypeSetElemAttr("pulsar_tenant.test", "admin_roles.*", testPulsarTenantWithAdminRoles1),
 					resource.TestCheckTypeSetElemAttr("pulsar_tenant.test", "admin_roles.*", testPulsarTenantWithAdminRoles2),
@@ -257,7 +268,7 @@ func TestTenantAdminRolesDrift(t *testing.T) {
 			{
 				Config: strings.Replace(testPulsarTenantWithAdminRoles, "thanos", tName, 1),
 				Check: resource.ComposeTestCheckFunc(
-					testPulsarTenantExists("pulsar_tenant.test"),
+					testPulsarTenantExists(),
 					resource.TestCheckResourceAttr("pulsar_tenant.test", "admin_roles.#", "2"),
 					resource.TestCheckTypeSetElemAttr("pulsar_tenant.test", "admin_roles.*", testPulsarTenantWithAdminRoles1),
 					resource.TestCheckTypeSetElemAttr("pulsar_tenant.test", "admin_roles.*", testPulsarTenantWithAdminRoles2),

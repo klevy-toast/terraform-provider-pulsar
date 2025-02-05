@@ -115,12 +115,24 @@ func testPulsarSinkDestroy(s *terraform.State) error {
 
 func TestImportExistingSink(t *testing.T) {
 	sinkName := acctest.RandString(6)
-	err := createSampleSink(sinkName)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t)
+			createSampleSink(sinkName)
+			t.Cleanup(func() {
+				if err := getClientFromMeta(testAccProvider.Meta()).Sinks().DeleteSink(
+					"public",
+					"default",
+					sinkName,
+				); err != nil {
+					if cliErr, ok := err.(rest.Error); ok && cliErr.Code == 404 {
+						return
+					}
+					t.Fatalf("ERROR_DELETING_TEST_SINK: %v", err)
+				}
+			})
+		},
 		ProviderFactories: testAccProviderFactories,
 		CheckDestroy:      testPulsarSinkDestroy,
 		Steps: []resource.TestStep{
@@ -242,7 +254,8 @@ func TestSinkUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	configString := string(configBytes)
-	configString = strings.ReplaceAll(configString, "sink-1", "update-sink-test-1")
+	newName := "sink" + acctest.RandString(10)
+	configString = strings.ReplaceAll(configString, "sink-1", newName)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                  func() { testAccPreCheck(t) },
@@ -253,7 +266,7 @@ func TestSinkUpdate(t *testing.T) {
 			{
 				Config: configString,
 				Check: resource.ComposeTestCheckFunc(func(s *terraform.State) error {
-					name := "pulsar_sink.update-sink-test-1"
+					name := "pulsar_sink." + newName
 					rs, ok := s.RootModule().Resources[name]
 					if !ok {
 						return fmt.Errorf("%s not be found", name)

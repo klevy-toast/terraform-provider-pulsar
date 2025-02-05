@@ -142,10 +142,9 @@ func resourcePulsarNamespace() *schema.Resource {
 				Set:      hashBacklogQuotaSubset(),
 			},
 			"namespace_config": {
-				Type:        schema.TypeSet,
+				Type:        schema.TypeList,
 				Optional:    true,
 				Description: descriptions["namespace_config"],
-				MaxItems:    1,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"anti_affinity": {
@@ -153,53 +152,34 @@ func resourcePulsarNamespace() *schema.Resource {
 							Optional:     true,
 							ValidateFunc: validateNotBlank,
 						},
+						"is_allow_auto_update_schema": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  true,
+						},
 						"max_consumers_per_subscription": {
 							Type:         schema.TypeInt,
 							Optional:     true,
-							Default:      -1,
+							Default:      0,
 							ValidateFunc: validateGtEq0,
 						},
 						"max_consumers_per_topic": {
 							Type:         schema.TypeInt,
 							Optional:     true,
-							Default:      -1,
+							Default:      0,
 							ValidateFunc: validateGtEq0,
 						},
 						"max_producers_per_topic": {
 							Type:         schema.TypeInt,
 							Optional:     true,
-							Default:      -1,
+							Default:      0,
 							ValidateFunc: validateGtEq0,
 						},
 						"message_ttl_seconds": {
 							Type:         schema.TypeInt,
 							Optional:     true,
-							Default:      -1,
+							Default:      0,
 							ValidateFunc: validateGtEq0,
-						},
-						"replication_clusters": {
-							Type:     schema.TypeList,
-							Optional: true,
-							MinItems: 1,
-							Elem: &schema.Schema{
-								Type: schema.TypeString,
-							},
-						},
-						"schema_validation_enforce": {
-							Type:     schema.TypeBool,
-							Optional: true,
-							Default:  false,
-						},
-						"schema_compatibility_strategy": {
-							Type:         schema.TypeString,
-							Optional:     true,
-							Default:      "Full",
-							ValidateFunc: validateNotBlank,
-						},
-						"is_allow_auto_update_schema": {
-							Type:     schema.TypeBool,
-							Optional: true,
-							Default:  true,
 						},
 						"offload_threshold_size_in_mb": {
 							Type:         schema.TypeInt,
@@ -207,9 +187,34 @@ func resourcePulsarNamespace() *schema.Resource {
 							Default:      -1,
 							ValidateFunc: validateGtEq0,
 						},
+						"replication_clusters": {
+							Type:     schema.TypeSet,
+							Optional: true,
+							Computed: true,
+							MinItems: 1,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
+						},
+						"schema_compatibility_strategy": {
+							Type:         schema.TypeString,
+							Optional:     true,
+							Default:      "Full",
+							ValidateFunc: validateNotBlank,
+						},
+						"schema_validation_enforce": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
+						"subscription_expiration_time_minutes": {
+							Type:         schema.TypeInt,
+							Optional:     true,
+							Default:      0,
+							ValidateFunc: validateGtEq0,
+						},
 					},
 				},
-				Set: namespaceConfigToHash,
 			},
 			"persistence_policies": {
 				Type:     schema.TypeSet,
@@ -332,76 +337,95 @@ func resourcePulsarNamespaceRead(ctx context.Context, d *schema.ResourceData, me
 	_ = d.Set("namespace", namespace)
 	_ = d.Set("tenant", tenant)
 
-	if namespaceConfig, ok := d.GetOk("namespace_config"); ok && namespaceConfig.(*schema.Set).Len() > 0 {
+	if _, ok := d.GetOk("namespace_config"); ok {
+		var namespaceConfig = make(map[string]interface{})
 		afgrp, err := client.GetNamespaceAntiAffinityGroup(ns.String())
 		if err != nil {
 			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetNamespaceAntiAffinityGroup: %w", err))
-		}
-
-		maxConsPerSub, err := client.GetMaxConsumersPerSubscription(*ns)
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetMaxConsumersPerSubscription: %w", err))
-		}
-
-		maxConsPerTopic, err := client.GetMaxConsumersPerTopic(*ns)
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetMaxConsumersPerTopic: %w", err))
-		}
-
-		maxProdPerTopic, err := client.GetMaxProducersPerTopic(*ns)
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetMaxProducersPerTopic: %w", err))
-		}
-
-		messageTTL, err := client.GetNamespaceMessageTTL(ns.String())
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetNamespaceMessageTTL: %w", err))
-		}
-
-		schemaValidationEnforce, err := client.GetSchemaValidationEnforced(*ns)
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetSchemaValidationEnforced: %w", err))
-		}
-
-		schemaCompatibilityStrategy, err := client.GetSchemaAutoUpdateCompatibilityStrategy(*ns)
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetSchemaAutoUpdateCompatibilityStrategy: %w", err))
-		}
-
-		replClustersRaw, err := client.GetNamespaceReplicationClusters(ns.String())
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetMaxProducersPerTopic: %w", err))
-		}
-
-		replClusters := make([]interface{}, len(replClustersRaw))
-		for i, cl := range replClustersRaw {
-			replClusters[i] = cl
+		} else {
+			namespaceConfig["anti_affinity"] = strings.Trim(strings.TrimSpace(afgrp), "\"")
 		}
 
 		isAllowAutoUpdateSchema, err := client.GetIsAllowAutoUpdateSchema(*ns)
 		if err != nil {
 			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetIsAllowAutoUpdateSchema: %w", err))
+		} else {
+			namespaceConfig["is_allow_auto_update_schema"] = isAllowAutoUpdateSchema
+		}
+
+		maxConsPerSub, err := client.GetMaxConsumersPerSubscription(*ns)
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetMaxConsumersPerSubscription: %w", err))
+		} else {
+			namespaceConfig["max_consumers_per_subscription"] = maxConsPerSub
+		}
+
+		maxConsPerTopic, err := client.GetMaxConsumersPerTopic(*ns)
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetMaxConsumersPerTopic: %w", err))
+		} else {
+			namespaceConfig["max_consumers_per_topic"] = maxConsPerTopic
+		}
+
+		maxProdPerTopic, err := client.GetMaxProducersPerTopic(*ns)
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetMaxProducersPerTopic: %w", err))
+		} else {
+			namespaceConfig["max_producers_per_topic"] = maxProdPerTopic
+		}
+
+		messageTTL, err := client.GetNamespaceMessageTTL(ns.String())
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetNamespaceMessageTTL: %w", err))
+		} else {
+			namespaceConfig["message_ttl_seconds"] = messageTTL
 		}
 
 		offloadTresholdSizeInMb, err := client.GetOffloadThreshold(*ns)
 		if err != nil {
 			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetOffloadThreshold: %w", err))
+		} else {
+			namespaceConfig["offload_threshold_size_in_mb"] = int(offloadTresholdSizeInMb)
 		}
 
-		_ = d.Set("namespace_config", schema.NewSet(namespaceConfigToHash, []interface{}{
-			map[string]interface{}{
-				"anti_affinity":                  strings.Trim(strings.TrimSpace(afgrp), "\""),
-				"max_consumers_per_subscription": maxConsPerSub,
-				"max_consumers_per_topic":        maxConsPerTopic,
-				"max_producers_per_topic":        maxProdPerTopic,
-				"message_ttl_seconds":            messageTTL,
-				"replication_clusters":           replClusters,
-				"schema_validation_enforce":      schemaValidationEnforce,
-				"schema_compatibility_strategy":  schemaCompatibilityStrategy.String(),
-				"is_allow_auto_update_schema":    isAllowAutoUpdateSchema,
-				"offload_threshold_size_in_mb":   int(offloadTresholdSizeInMb),
-			},
-		}))
+		replClustersRaw, err := client.GetNamespaceReplicationClusters(ns.String())
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetMaxProducersPerTopic: %w", err))
+		} else {
+			replClustersInterface := make([]interface{}, len(replClustersRaw))
+			for i, cl := range replClustersRaw {
+				replClustersInterface[i] = cl
+			}
+			replClusters := schema.NewSet(schema.HashString, replClustersInterface)
+			namespaceConfig["replication_clusters"] = replClusters
+		}
+
+		schemaValidationEnforce, err := client.GetSchemaValidationEnforced(*ns)
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetSchemaValidationEnforced: %w", err))
+		} else {
+			namespaceConfig["schema_validation_enforce"] = schemaValidationEnforce
+		}
+
+		schemaCompatibilityStrategy, err := client.GetSchemaAutoUpdateCompatibilityStrategy(*ns)
+		if err != nil {
+			if !strings.Contains(err.Error(), "Invalid auth strategy") {
+				return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetSchemaAutoUpdateCompatibilityStrategy: %w", err))
+			}
+		} else {
+			namespaceConfig["schema_compatibility_strategy"] = schemaCompatibilityStrategy.String()
+		}
+
+		subscriptionExpirationTimeMinutes, err := client.GetSubscriptionExpirationTime(*ns)
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("ERROR_READ_NAMESPACE: GetSubscriptionExpirationTime: %w", err))
+		} else {
+			namespaceConfig["subscription_expiration_time_minutes"] = subscriptionExpirationTimeMinutes
+		}
+
+		_ = d.Set("namespace_config", []interface{}{
+			namespaceConfig,
+		})
 	}
 
 	if persPoliciesCfg, ok := d.GetOk("persistence_policies"); ok && persPoliciesCfg.(*schema.Set).Len() > 0 {
@@ -518,7 +542,7 @@ func resourcePulsarNamespaceUpdate(ctx context.Context, d *schema.ResourceData, 
 	namespace := d.Get("namespace").(string)
 	tenant := d.Get("tenant").(string)
 	enableDeduplication, deduplicationDefined := d.GetOk("enable_deduplication")
-	namespaceConfig := d.Get("namespace_config").(*schema.Set)
+	namespaceConfig := d.Get("namespace_config").([]interface{})
 	retentionPoliciesConfig := d.Get("retention_policies").(*schema.Set)
 	backlogQuotaConfig := d.Get("backlog_quota").(*schema.Set)
 	dispatchRateConfig := d.Get("dispatch_rate").(*schema.Set)
@@ -534,8 +558,8 @@ func resourcePulsarNamespaceUpdate(ctx context.Context, d *schema.ResourceData, 
 
 	var errs error
 
-	if namespaceConfig.Len() > 0 {
-		nsCfg := unmarshalNamespaceConfig(namespaceConfig)
+	if len(namespaceConfig) > 0 {
+		nsCfg := unmarshalNamespaceConfigList(namespaceConfig)
 
 		if len(nsCfg.AntiAffinity) > 0 {
 			if err = client.SetNamespaceAntiAffinityGroup(nsName.String(), nsCfg.AntiAffinity); err != nil {
@@ -543,10 +567,8 @@ func resourcePulsarNamespaceUpdate(ctx context.Context, d *schema.ResourceData, 
 			}
 		}
 
-		if len(nsCfg.ReplicationClusters) > 0 {
-			if err = client.SetNamespaceReplicationClusters(nsName.String(), nsCfg.ReplicationClusters); err != nil {
-				errs = multierror.Append(errs, fmt.Errorf("SetNamespaceReplicationClusters: %w", err))
-			}
+		if err = client.SetIsAllowAutoUpdateSchema(*nsName, nsCfg.IsAllowAutoUpdateSchema); err != nil {
+			errs = multierror.Append(errs, fmt.Errorf("SetIsAllowAutoUpdateSchema: %w", err))
 		}
 
 		if nsCfg.MaxConsumersPerTopic >= 0 {
@@ -579,8 +601,10 @@ func resourcePulsarNamespaceUpdate(ctx context.Context, d *schema.ResourceData, 
 			}
 		}
 
-		if err = client.SetSchemaValidationEnforced(*nsName, nsCfg.SchemaValidationEnforce); err != nil {
-			errs = multierror.Append(errs, fmt.Errorf("SetSchemaValidationEnforced: %w", err))
+		if len(nsCfg.ReplicationClusters) > 0 {
+			if err = client.SetNamespaceReplicationClusters(nsName.String(), nsCfg.ReplicationClusters); err != nil {
+				errs = multierror.Append(errs, fmt.Errorf("SetNamespaceReplicationClusters: %w", err))
+			}
 		}
 
 		if len(nsCfg.SchemaCompatibilityStrategy) > 0 {
@@ -591,8 +615,19 @@ func resourcePulsarNamespaceUpdate(ctx context.Context, d *schema.ResourceData, 
 				errs = multierror.Append(errs, fmt.Errorf("SetSchemaCompatibilityStrategy: %w", err))
 			}
 		}
-		if err = client.SetIsAllowAutoUpdateSchema(*nsName, nsCfg.IsAllowAutoUpdateSchema); err != nil {
-			errs = multierror.Append(errs, fmt.Errorf("SetIsAllowAutoUpdateSchema: %w", err))
+
+		if err = client.SetSchemaValidationEnforced(*nsName, nsCfg.SchemaValidationEnforce); err != nil {
+			errs = multierror.Append(errs, fmt.Errorf("SetSchemaValidationEnforced: %w", err))
+		}
+
+		if nsCfg.SubscriptionExpirationTimeMinutes >= 0 {
+			if err = client.SetSubscriptionExpirationTime(*nsName, nsCfg.SubscriptionExpirationTimeMinutes); err != nil {
+				errs = multierror.Append(errs, fmt.Errorf("SetSubscriptionExpirationTime: %w", err))
+			}
+		} else { // remove the subscription expiration time
+			if err = client.RemoveSubscriptionExpirationTime(*nsName); err != nil {
+				errs = multierror.Append(errs, fmt.Errorf("RemoveSubscriptionExpirationTime: %w", err))
+			}
 		}
 	}
 
@@ -746,23 +781,6 @@ func retentionPoliciesToHash(v interface{}) int {
 	return hashcode.String(buf.String())
 }
 
-func namespaceConfigToHash(v interface{}) int {
-	var buf bytes.Buffer
-	m := v.(map[string]interface{})
-
-	buf.WriteString(fmt.Sprintf("%s-", m["anti_affinity"].(string)))
-	buf.WriteString(fmt.Sprintf("%d-", m["max_consumers_per_subscription"].(int)))
-	buf.WriteString(fmt.Sprintf("%d-", m["max_consumers_per_topic"].(int)))
-	buf.WriteString(fmt.Sprintf("%d-", m["max_producers_per_topic"].(int)))
-	buf.WriteString(fmt.Sprintf("%d-", m["message_ttl_seconds"].(int)))
-	buf.WriteString(fmt.Sprintf("%s-", m["replication_clusters"].([]interface{})))
-	buf.WriteString(fmt.Sprintf("%t-", m["schema_validation_enforce"].(bool)))
-	buf.WriteString(fmt.Sprintf("%s-", m["schema_compatibility_strategy"].(string)))
-	buf.WriteString(fmt.Sprintf("%d-", m["offload_threshold_size_in_mb"].(int)))
-
-	return hashcode.String(buf.String())
-}
-
 func persistencePoliciesToHash(v interface{}) int {
 	var buf bytes.Buffer
 	m := v.(map[string]interface{})
@@ -819,23 +837,24 @@ func unmarshalRetentionPolicies(v *schema.Set) *utils.RetentionPolicies {
 	return &rtnPolicies
 }
 
-func unmarshalNamespaceConfig(v *schema.Set) *types.NamespaceConfig {
+func unmarshalNamespaceConfigList(v []interface{}) *types.NamespaceConfig {
 	var nsConfig types.NamespaceConfig
 
-	for _, ns := range v.List() {
+	for _, ns := range v {
 		data := ns.(map[string]interface{})
-		rplClusters := data["replication_clusters"].([]interface{})
 
-		nsConfig.ReplicationClusters = handleHCLArrayV2(rplClusters)
+		nsConfig.AntiAffinity = data["anti_affinity"].(string)
+		nsConfig.IsAllowAutoUpdateSchema = data["is_allow_auto_update_schema"].(bool)
 		nsConfig.MaxProducersPerTopic = data["max_producers_per_topic"].(int)
 		nsConfig.MaxConsumersPerTopic = data["max_consumers_per_topic"].(int)
 		nsConfig.MaxConsumersPerSubscription = data["max_consumers_per_subscription"].(int)
 		nsConfig.MessageTTLInSeconds = data["message_ttl_seconds"].(int)
-		nsConfig.AntiAffinity = data["anti_affinity"].(string)
-		nsConfig.SchemaValidationEnforce = data["schema_validation_enforce"].(bool)
-		nsConfig.SchemaCompatibilityStrategy = data["schema_compatibility_strategy"].(string)
-		nsConfig.IsAllowAutoUpdateSchema = data["is_allow_auto_update_schema"].(bool)
 		nsConfig.OffloadThresholdSizeInMb = data["offload_threshold_size_in_mb"].(int)
+		rplClusters := data["replication_clusters"].(*schema.Set).List()
+		nsConfig.ReplicationClusters = handleHCLArrayV2(rplClusters)
+		nsConfig.SchemaCompatibilityStrategy = data["schema_compatibility_strategy"].(string)
+		nsConfig.SchemaValidationEnforce = data["schema_validation_enforce"].(bool)
+		nsConfig.SubscriptionExpirationTimeMinutes = data["subscription_expiration_time_minutes"].(int)
 	}
 
 	return &nsConfig
